@@ -24,7 +24,7 @@ from app.config import (
     logger,
 )
 from app.middleware import security_middleware
-from app.routes import document_routes, pgvector_routes, chat_routes
+from app.routes import document_routes, pgvector_routes, chat_routes, guardrails_routes
 from app.services.database import PSQLDatabase, ensure_vector_indexes
 
 
@@ -76,6 +76,7 @@ app.state.PDF_EXTRACT_IMAGES = PDF_EXTRACT_IMAGES
 # Include routers
 app.include_router(document_routes.router)
 app.include_router(chat_routes.router)
+app.include_router(guardrails_routes.router, tags=["Guardrails"])
 if debug_mode:
     app.include_router(router=pgvector_routes.router)
 

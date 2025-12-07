@@ -384,7 +384,10 @@ async function sendMessage() {
         removeMessage(typingId);
 
         if (!response.ok) {
-            throw new Error(`Chat request failed: ${response.statusText}`);
+            // Extract the detailed error message from the response
+            const errorData = await response.json().catch(() => ({}));
+            const errorMessage = errorData.detail || response.statusText;
+            throw new Error(errorMessage);
         }
 
         const result = await response.json();

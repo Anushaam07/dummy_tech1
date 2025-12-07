@@ -1738,19 +1738,17 @@ async def generate_ollama_response(prompt: str, temperature: float) -> str:
         )
 
 
-# ----------------------- Chat Endpoint -----------------------
-@router.post("/chat", response_model=SimpleChatResponse)
-async def chat_with_documents(request: Request, body: ChatRequest):
+# ----------------------- Chat Endpoint (UNSAFE - FOR DEMO ONLY) -----------------------
+# WARNING: This endpoint has NO guardrails protection - for demonstration purposes only
+# This endpoint intentionally LEAKS sensitive data to show the problem before guardrails
+@router.post("/chat-unsafe", response_model=SimpleChatResponse)
+async def chat_with_documents_unsafe(request: Request, body: ChatRequest):
     try:
-        # Block queries that explicitly ask for secrets
-        if contains_sensitive_query(body.query):
-            raise HTTPException(
-                status_code=400,
-                detail="This request cannot be completed due to policy restrictions."
-            )
+        # ⚠️ UNSAFE: No sensitive query blocking - allows "What are the passwords?"
+        # ⚠️ This is intentionally disabled to show data leakage in demos
 
-        # Retrieve and sanitize documents (secrets redacted from context)
-        logger.info(f"Retrieving documents for query: {body.query[:80]}...")
+        # Retrieve documents WITHOUT sanitization
+        logger.info(f"[UNSAFE DEMO] Retrieving documents for query: {body.query[:80]}...")
         documents = await retrieve_relevant_documents(body.query, body.file_id, body.k, request)
         if not documents:
             raise HTTPException(
@@ -1758,32 +1756,55 @@ async def chat_with_documents(request: Request, body: ChatRequest):
                 detail="No relevant documents found for the query"
             )
 
-        context = format_sources_for_context(documents)
+        # ⚠️ UNSAFE: Format context WITHOUT redaction - exposes raw PII/secrets
+        context_parts = []
+        for idx, (doc, score) in enumerate(documents, 1):
+            # NO redaction - shows raw content including passwords, SSN, API keys!
+            context_parts.append(f"[Source {idx}] (Relevance: {score:.3f})\n{doc.page_content}\n")
+        context = "\n".join(context_parts)
         logger.info(f"Retrieved {len(documents)} relevant documents (sanitized)")
 
-        # Generate response using selected model
+        # ⚠️ UNSAFE: Generate response WITHOUT redaction - may leak secrets in output
         if body.model and body.model.lower().startswith("azure"):
             messages = create_chat_messages(body.query, context)
-            answer = await generate_azure_response(messages, body.temperature)
+            # Call Azure without redacting output
+            client = get_azure_client()
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=messages,
+                temperature=body.temperature,
+                max_tokens=1000
+            )
+            answer = response.choices[0].message.content  # NO redaction!
             model_used = "Azure GPT-4o-mini"
         elif body.model and body.model.lower().startswith("gemini"):
             prompt = create_rag_prompt(body.query, context)
-            answer = await generate_gemini_response(prompt, body.temperature, body.model)
+            # Call Gemini without redacting output
+            model = get_gemini_client(body.model)
+            generation_config = {"temperature": body.temperature, "max_output_tokens": 1000}
+            response = model.generate_content(prompt, generation_config=generation_config)
+            answer = getattr(response, "text", "Cannot generate response")  # NO redaction!
             model_used = f"Google Gemini ({body.model})"
         elif body.model and body.model.lower().startswith("ollama"):
             prompt = create_rag_prompt(body.query, context)
-            answer = await generate_ollama_response(prompt, body.temperature)
-            model_used = f"Ollama ({os.getenv('OLLAMA_MODEL', 'deepseek-r1:latest')})"
+            # Call Ollama without redacting output
+            ollama_host = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+            ollama_model = os.getenv("OLLAMA_MODEL", "deepseek-r1:latest")
+            client = ollama.Client(host=ollama_host)
+            response = client.generate(model=ollama_model, prompt=prompt,
+                                     options={"temperature": body.temperature, "num_predict": 1000})
+            answer = response.get('response', str(response))  # NO redaction!
+            model_used = f"Ollama ({ollama_model})"
         else:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Unsupported model: {body.model}"
             )
 
-        # Return only the answer text - no sources, no metadata, no model info
-        logger.info(f"Generated response using {model_used}")
+        # ⚠️ UNSAFE: Return raw answer - may contain passwords, SSN, API keys!
+        logger.warning(f"[UNSAFE DEMO] Generated UNREDACTED response using {model_used}")
         return SimpleChatResponse(
-            answer=answer
+            answer=answer  # NO redaction applied!
         )
 
     except HTTPException:

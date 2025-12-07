@@ -26,6 +26,7 @@ from app.config import (
 from app.middleware import security_middleware
 from app.routes import document_routes, pgvector_routes, guardrails_routes
 from app.routes import chat_routes_with_external_guardrails as chat_routes
+from app.routes import chat_routes as chat_routes_unsafe  # For demo comparison
 from app.services.database import PSQLDatabase, ensure_vector_indexes
 
 
@@ -76,7 +77,8 @@ app.state.PDF_EXTRACT_IMAGES = PDF_EXTRACT_IMAGES
 
 # Include routers
 app.include_router(document_routes.router)
-app.include_router(chat_routes.router)
+app.include_router(chat_routes.router, tags=["Chat"])  # Protected with guardrails
+app.include_router(chat_routes_unsafe.router, tags=["Demo - Unsafe"])  # NO guardrails (demo only)
 app.include_router(guardrails_routes.router, tags=["Guardrails"])
 if debug_mode:
     app.include_router(router=pgvector_routes.router)

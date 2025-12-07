@@ -1499,77 +1499,10 @@ from app.services.vector_store.async_pg_vector import AsyncPgVector
 
 router = APIRouter()
 
-# -----------------------
-# Moderate secret-blocking (B): allow names/emails but block high-risk secrets
-# -----------------------
-
-# Query keywords that should block the request (user asked explicitly for secrets)
-SENSITIVE_QUERY_KEYWORDS = [
-    "password", "passwd", "passphrase", "ssn", "social security",
-    "api key", "secret", "secret key", "access key", "aws access", "aws secret",
-    "stripe", "credit card", "card number", "cvv", "private key", "ssh key", "jwt",
-    "token"
-]
-
-# Regex patterns that indicate secrets in text (will be redacted)
-SENSITIVE_PATTERNS = {
-    # Common API key prefixes (striped examples). This will match typical key patterns.
-    r'\bsk_live_[A-Za-z0-9_\-]{8,}\b': '[REDACTED_API_KEY]',
-    r'\bsk_test_[A-Za-z0-9_\-]{8,}\b': '[REDACTED_API_KEY]',
-    r'\bsk-[A-Za-z0-9_\-]{8,}\b': '[REDACTED_API_KEY]',
-    r'\bAKIA[0-9A-Z]{8,}\b': '[REDACTED_AWS_KEY]',
-    r'\bA3T[A-Z0-9]{8,}\b': '[REDACTED_AWS_KEY]',
-    # AWS secret-ish (long base64-like)
-    r'\b[A-Za-z0-9\/+]{30,}\={0,2}\b': '[REDACTED_POTENTIAL_SECRET]',
-    # Generic "secret" forms
-    r'(?i)secret[_\-\s]?key[:=]\s*\S+': '[REDACTED_SECRET]',
-    r'(?i)api[_\-\s]?key[:=]\s*\S+': '[REDACTED_API_KEY]',
-    r'(?i)access[_\-\s]?token[:=]\s*\S+': '[REDACTED_TOKEN]',
-    # Private key blocks
-    r'-----BEGIN PRIVATE KEY-----[\s\S]+?-----END PRIVATE KEY-----': '[REDACTED_PRIVATE_KEY]',
-    r'ssh-rsa\s+[A-Za-z0-9+/=]{50,}': '[REDACTED_SSH_KEY]',
-    # Credit cards (very permissive) - redacted
-    r'\b(?:\d[ -]*?){13,19}\b': '[REDACTED_CREDIT_CARD]',
-    # SSN pattern
-    r'\b\d{3}-\d{2}-\d{4}\b': '[REDACTED_SSN]',
-    # JWT-like (header.payload.signature)
-    r'\beyJ[0-9A-Za-z_\-]+\.[0-9A-Za-z_\-]+\.[0-9A-Za-z_\-]+\b': '[REDACTED_JWT]'
-}
-
-# Patterns we should NOT redact under 'moderate' mode:
-# - Names and emails are allowed (do NOT include them in SENSITIVE_PATTERNS).
-# - We intentionally avoid over-redacting short tokens or normal words.
-
-# Compile regexes for speed
-_COMPILED_SENSITIVE_RE = [(re.compile(pat, flags=re.IGNORECASE | re.DOTALL), repl)
-                          for pat, repl in SENSITIVE_PATTERNS.items()]
-
-
-def redact_sensitive_data(text: str) -> str:
-    """
-    Redact high-risk secrets from text. This is applied:
-     - to document context before sending to model (so model doesn't *see* raw secrets)
-     - to model outputs before returning to client (so we never leak)
-    We preserve emails and normal names (user wanted that).
-    """
-    if not text:
-        return text
-    redacted = text
-    for cre, repl in _COMPILED_SENSITIVE_RE:
-        redacted = cre.sub(repl, redacted)
-    return redacted
-
-
-def contains_sensitive_query(query: str) -> bool:
-    """Return True if the user query appears to be requesting secrets explicitly."""
-    if not query:
-        return False
-    qlow = query.lower()
-    for kw in SENSITIVE_QUERY_KEYWORDS:
-        if kw in qlow:
-            return True
-    return False
-
+# NOTE: This file provides /chat-unsafe endpoint for DEMO purposes only.
+# It intentionally has NO guardrails protection to demonstrate data leakage.
+# Production uses chat_routes_with_external_guardrails.py with full protection.
+# All security patterns are in app/services/guardrails.py (external service).
 
 # ----------------------- LLM Clients -----------------------
 def get_azure_client():

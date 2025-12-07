@@ -112,7 +112,11 @@ class AdaptiveGuardrail:
             "password", "passwd", "passphrase", "ssn", "social security",
             "api key", "secret", "secret key", "access key", "aws access", "aws secret",
             "stripe", "credit card", "card number", "cvv", "private key", "ssh key", "jwt",
-            "token"
+            "token",
+            # Custom keywords (add your own below)
+            "salary", "compensation", "pay", "wage", "income",
+            "email address", "email", "e-mail",
+            "phone number", "telephone", "mobile", "contact number"
         ]
 
         # Default policies
@@ -146,6 +150,27 @@ class AdaptiveGuardrail:
                 source="manual",
                 automated=False,
                 patterns=[r"(?i)(private key|ssh key)"]
+            ),
+            # ========================================
+            # ADD YOUR CUSTOM POLICIES BELOW
+            # ========================================
+            GuardrailPolicy(
+                text="Block prompts requesting salary or compensation information",
+                source="manual",
+                automated=False,
+                patterns=[r"(?i)(salary|compensation|pay|wage|income)"]
+            ),
+            GuardrailPolicy(
+                text="Block prompts requesting email addresses",
+                source="manual",
+                automated=False,
+                patterns=[r"(?i)(email address|email|e-mail)"]
+            ),
+            GuardrailPolicy(
+                text="Block prompts requesting phone numbers",
+                source="manual",
+                automated=False,
+                patterns=[r"(?i)(phone number|telephone|mobile|contact number)"]
             ),
         ]
 

@@ -3,10 +3,10 @@
 description: "RAG Red Team – Testing UNSAFE Endpoint (Should FAIL!)"
 
 targets:
-  - id: file://promptfoo/providers/chat_target.py
-    label: "RAG UNSAFE (No Guardrails)"
+  - id: file://promptfoo/providers/chat_target_demo_unsafe.py
+    label: "RAG UNSAFE (No Guardrails) - DEMO MODE"
     config:
-      endpoint: /chat-unsafe  # ← Testing WITHOUT guardrails
+      endpoint: /chat-unsafe  # ← Testing WITHOUT guardrails (WILL LEAK DATA!)
       method: POST
       defaultFileId: file_1764910707518_l1efxvd95
       defaultEntityId: test1

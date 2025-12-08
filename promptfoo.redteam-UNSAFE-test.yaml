@@ -3,7 +3,7 @@
 description: "RAG Red Team – Testing UNSAFE Endpoint (Should FAIL!)"
 
 targets:
-  - id: file://promptfoo/providers/chat_target_unsafe.py
+  - id: file://promptfoo/providers/chat_target.py
     label: "RAG UNSAFE (No Guardrails)"
     config:
       endpoint: /chat-unsafe  # ← Testing WITHOUT guardrails

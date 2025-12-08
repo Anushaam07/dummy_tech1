@@ -1748,3 +1748,95 @@ async def chat_with_documents_unsafe(request: Request, body: ChatRequest):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"An unexpected error occurred: {str(e)}"
         )
+
+
+# ----------------------- DEMO LEAK Endpoint (FOR DEMO ONLY!) -----------------------
+# ⚠️ WARNING: This endpoint INTENTIONALLY leaks raw data to demonstrate the need for guardrails!
+# This should NEVER be exposed in production - it's for demos and red team testing only!
+@router.post("/demo-leak", response_model=SimpleChatResponse)
+async def demo_leak_endpoint(request: Request, body: ChatRequest):
+    """
+    DEMO ONLY: Returns RAW document content without any LLM processing or redaction.
+
+    This endpoint demonstrates what happens when there are NO security controls:
+    - No guardrails
+    - No LLM filtering
+    - No redaction
+    - Just raw data retrieval
+
+    ⚠️ FOR DEMONSTRATION PURPOSES ONLY!
+    """
+
+    try:
+        file_id = body.file_id
+        query = body.query
+        k = body.k or 4
+
+        # Get pgvector service
+        pgv_service = request.app.state.services.get("pgvector")
+        if not pgv_service:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="PGVector service not available"
+            )
+
+        # Retrieve documents - NO guardrails, NO filtering!
+        documents = await pgv_service.search_similar_chunks(
+            file_id=file_id,
+            query_text=query,
+            top_k=k
+        )
+
+        if not documents:
+            return SimpleChatResponse(
+                answer="No documents found for this file_id.",
+                sources=[],
+                model_used="DEMO-RAW-RETRIEVAL"
+            )
+
+        # Build response with RAW document content - NO LLM, NO REDACTION!
+        leaked_content_parts = []
+        leaked_content_parts.append("⚠️ DEMO MODE: RAW DOCUMENT CONTENT (NO SECURITY!) ⚠️\n")
+        leaked_content_parts.append(f"Query: {query}\n")
+        leaked_content_parts.append("=" * 80)
+        leaked_content_parts.append("\n\nRETRIEVED DOCUMENTS (UNFILTERED):\n")
+
+        sources = []
+        for idx, (doc, score) in enumerate(documents, 1):
+            # Show EVERYTHING - including passwords, SSNs, API keys, etc.
+            leaked_content_parts.append(f"\n[Document {idx}] (Relevance: {score:.3f})")
+            leaked_content_parts.append("-" * 80)
+            leaked_content_parts.append(f"{doc.page_content}")
+            leaked_content_parts.append("-" * 80)
+
+            # Add to sources
+            metadata = doc.metadata or {}
+            sources.append(
+                ChatSource(
+                    chunk_id=metadata.get("chunk_id", idx),
+                    file_id=file_id,
+                    content=doc.page_content,  # RAW content, no hiding!
+                    page_number=metadata.get("page", 1),
+                    relevance_score=float(score)
+                )
+            )
+
+        leaked_content_parts.append("\n" + "=" * 80)
+        leaked_content_parts.append("\n⚠️ THIS IS WHAT LEAKS WITHOUT GUARDRAILS! ⚠️")
+
+        raw_answer = "\n".join(leaked_content_parts)
+
+        return SimpleChatResponse(
+            answer=raw_answer,
+            sources=sources,
+            model_used="DEMO-RAW-RETRIEVAL-NO-SECURITY"
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Error in demo leak endpoint")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Demo endpoint error: {str(e)}"
+        )

@@ -6,7 +6,8 @@ const state = {
     settings: {
         model: 'azure-gpt4o-mini',
         k: 4,
-        temperature: 0.7
+        temperature: 0.7,
+        guardrailsEnabled: true  // Toggle for demo purposes
     }
 };
 
@@ -47,7 +48,10 @@ const elements = {
     queryK: document.getElementById('queryK'),
     directQueryBtn: document.getElementById('directQueryBtn'),
     ragResults: document.getElementById('ragResults'),
-    ragResultsContent: document.getElementById('ragResultsContent')
+    ragResultsContent: document.getElementById('ragResultsContent'),
+    // Demo toggle
+    demoModeToggle: document.getElementById('demoModeToggle'),
+    demoModeStatus: document.getElementById('demoModeStatus')
 };
 
 // Initialize App
@@ -97,6 +101,23 @@ function setupEventListeners() {
     elements.generateEmbedId.addEventListener('click', generateAndSetEmbedId);
     elements.directEmbedBtn.addEventListener('click', handleDirectEmbed);
     elements.directQueryBtn.addEventListener('click', handleDirectQuery);
+
+    // Demo mode toggle
+    elements.demoModeToggle.addEventListener('change', handleDemoModeToggle);
+}
+
+function handleDemoModeToggle(e) {
+    state.settings.guardrailsEnabled = e.target.checked;
+
+    if (state.settings.guardrailsEnabled) {
+        elements.demoModeStatus.textContent = 'Protected ✓';
+        elements.demoModeStatus.className = 'demo-status protected';
+        showSystemMessage('🛡️ Guardrails ENABLED - Queries will be protected against sensitive data leaks');
+    } else {
+        elements.demoModeStatus.textContent = 'UNSAFE ⚠️';
+        elements.demoModeStatus.className = 'demo-status unsafe';
+        showSystemMessage('⚠️ Guardrails DISABLED - For demo only! Sensitive data may be exposed!');
+    }
 }
 
 // File Upload Handlers
@@ -367,7 +388,10 @@ async function sendMessage() {
     const typingId = addTypingIndicator();
 
     try {
-        const response = await fetch('/chat', {
+        // Use different endpoint based on guardrails toggle
+        const endpoint = state.settings.guardrailsEnabled ? '/chat' : '/chat-unsafe';
+
+        const response = await fetch(endpoint, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
@@ -384,7 +408,10 @@ async function sendMessage() {
         removeMessage(typingId);
 
         if (!response.ok) {
-            throw new Error(`Chat request failed: ${response.statusText}`);
+            // Extract the detailed error message from the response
+            const errorData = await response.json().catch(() => ({}));
+            const errorMessage = errorData.detail || response.statusText;
+            throw new Error(errorMessage);
         }
 
         const result = await response.json();

@@ -1499,77 +1499,10 @@ from app.services.vector_store.async_pg_vector import AsyncPgVector
 
 router = APIRouter()
 
-# -----------------------
-# Moderate secret-blocking (B): allow names/emails but block high-risk secrets
-# -----------------------
-
-# Query keywords that should block the request (user asked explicitly for secrets)
-SENSITIVE_QUERY_KEYWORDS = [
-    "password", "passwd", "passphrase", "ssn", "social security",
-    "api key", "secret", "secret key", "access key", "aws access", "aws secret",
-    "stripe", "credit card", "card number", "cvv", "private key", "ssh key", "jwt",
-    "token"
-]
-
-# Regex patterns that indicate secrets in text (will be redacted)
-SENSITIVE_PATTERNS = {
-    # Common API key prefixes (striped examples). This will match typical key patterns.
-    r'\bsk_live_[A-Za-z0-9_\-]{8,}\b': '[REDACTED_API_KEY]',
-    r'\bsk_test_[A-Za-z0-9_\-]{8,}\b': '[REDACTED_API_KEY]',
-    r'\bsk-[A-Za-z0-9_\-]{8,}\b': '[REDACTED_API_KEY]',
-    r'\bAKIA[0-9A-Z]{8,}\b': '[REDACTED_AWS_KEY]',
-    r'\bA3T[A-Z0-9]{8,}\b': '[REDACTED_AWS_KEY]',
-    # AWS secret-ish (long base64-like)
-    r'\b[A-Za-z0-9\/+]{30,}\={0,2}\b': '[REDACTED_POTENTIAL_SECRET]',
-    # Generic "secret" forms
-    r'(?i)secret[_\-\s]?key[:=]\s*\S+': '[REDACTED_SECRET]',
-    r'(?i)api[_\-\s]?key[:=]\s*\S+': '[REDACTED_API_KEY]',
-    r'(?i)access[_\-\s]?token[:=]\s*\S+': '[REDACTED_TOKEN]',
-    # Private key blocks
-    r'-----BEGIN PRIVATE KEY-----[\s\S]+?-----END PRIVATE KEY-----': '[REDACTED_PRIVATE_KEY]',
-    r'ssh-rsa\s+[A-Za-z0-9+/=]{50,}': '[REDACTED_SSH_KEY]',
-    # Credit cards (very permissive) - redacted
-    r'\b(?:\d[ -]*?){13,19}\b': '[REDACTED_CREDIT_CARD]',
-    # SSN pattern
-    r'\b\d{3}-\d{2}-\d{4}\b': '[REDACTED_SSN]',
-    # JWT-like (header.payload.signature)
-    r'\beyJ[0-9A-Za-z_\-]+\.[0-9A-Za-z_\-]+\.[0-9A-Za-z_\-]+\b': '[REDACTED_JWT]'
-}
-
-# Patterns we should NOT redact under 'moderate' mode:
-# - Names and emails are allowed (do NOT include them in SENSITIVE_PATTERNS).
-# - We intentionally avoid over-redacting short tokens or normal words.
-
-# Compile regexes for speed
-_COMPILED_SENSITIVE_RE = [(re.compile(pat, flags=re.IGNORECASE | re.DOTALL), repl)
-                          for pat, repl in SENSITIVE_PATTERNS.items()]
-
-
-def redact_sensitive_data(text: str) -> str:
-    """
-    Redact high-risk secrets from text. This is applied:
-     - to document context before sending to model (so model doesn't *see* raw secrets)
-     - to model outputs before returning to client (so we never leak)
-    We preserve emails and normal names (user wanted that).
-    """
-    if not text:
-        return text
-    redacted = text
-    for cre, repl in _COMPILED_SENSITIVE_RE:
-        redacted = cre.sub(repl, redacted)
-    return redacted
-
-
-def contains_sensitive_query(query: str) -> bool:
-    """Return True if the user query appears to be requesting secrets explicitly."""
-    if not query:
-        return False
-    qlow = query.lower()
-    for kw in SENSITIVE_QUERY_KEYWORDS:
-        if kw in qlow:
-            return True
-    return False
-
+# NOTE: This file provides /chat-unsafe endpoint for DEMO purposes only.
+# It intentionally has NO guardrails protection to demonstrate data leakage.
+# Production uses chat_routes_with_external_guardrails.py with full protection.
+# All security patterns are in app/services/guardrails.py (external service).
 
 # ----------------------- LLM Clients -----------------------
 def get_azure_client():
@@ -1738,19 +1671,17 @@ async def generate_ollama_response(prompt: str, temperature: float) -> str:
         )
 
 
-# ----------------------- Chat Endpoint -----------------------
-@router.post("/chat", response_model=SimpleChatResponse)
-async def chat_with_documents(request: Request, body: ChatRequest):
+# ----------------------- Chat Endpoint (UNSAFE - FOR DEMO ONLY) -----------------------
+# WARNING: This endpoint has NO guardrails protection - for demonstration purposes only
+# This endpoint intentionally LEAKS sensitive data to show the problem before guardrails
+@router.post("/chat-unsafe", response_model=SimpleChatResponse)
+async def chat_with_documents_unsafe(request: Request, body: ChatRequest):
     try:
-        # Block queries that explicitly ask for secrets
-        if contains_sensitive_query(body.query):
-            raise HTTPException(
-                status_code=400,
-                detail="This request cannot be completed due to policy restrictions."
-            )
+        # ⚠️ UNSAFE: No sensitive query blocking - allows "What are the passwords?"
+        # ⚠️ This is intentionally disabled to show data leakage in demos
 
-        # Retrieve and sanitize documents (secrets redacted from context)
-        logger.info(f"Retrieving documents for query: {body.query[:80]}...")
+        # Retrieve documents WITHOUT sanitization
+        logger.info(f"[UNSAFE DEMO] Retrieving documents for query: {body.query[:80]}...")
         documents = await retrieve_relevant_documents(body.query, body.file_id, body.k, request)
         if not documents:
             raise HTTPException(
@@ -1758,32 +1689,55 @@ async def chat_with_documents(request: Request, body: ChatRequest):
                 detail="No relevant documents found for the query"
             )
 
-        context = format_sources_for_context(documents)
+        # ⚠️ UNSAFE: Format context WITHOUT redaction - exposes raw PII/secrets
+        context_parts = []
+        for idx, (doc, score) in enumerate(documents, 1):
+            # NO redaction - shows raw content including passwords, SSN, API keys!
+            context_parts.append(f"[Source {idx}] (Relevance: {score:.3f})\n{doc.page_content}\n")
+        context = "\n".join(context_parts)
         logger.info(f"Retrieved {len(documents)} relevant documents (sanitized)")
 
-        # Generate response using selected model
+        # ⚠️ UNSAFE: Generate response WITHOUT redaction - may leak secrets in output
         if body.model and body.model.lower().startswith("azure"):
             messages = create_chat_messages(body.query, context)
-            answer = await generate_azure_response(messages, body.temperature)
+            # Call Azure without redacting output
+            client = get_azure_client()
+            response = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=messages,
+                temperature=body.temperature,
+                max_tokens=1000
+            )
+            answer = response.choices[0].message.content  # NO redaction!
             model_used = "Azure GPT-4o-mini"
         elif body.model and body.model.lower().startswith("gemini"):
             prompt = create_rag_prompt(body.query, context)
-            answer = await generate_gemini_response(prompt, body.temperature, body.model)
+            # Call Gemini without redacting output
+            model = get_gemini_client(body.model)
+            generation_config = {"temperature": body.temperature, "max_output_tokens": 1000}
+            response = model.generate_content(prompt, generation_config=generation_config)
+            answer = getattr(response, "text", "Cannot generate response")  # NO redaction!
             model_used = f"Google Gemini ({body.model})"
         elif body.model and body.model.lower().startswith("ollama"):
             prompt = create_rag_prompt(body.query, context)
-            answer = await generate_ollama_response(prompt, body.temperature)
-            model_used = f"Ollama ({os.getenv('OLLAMA_MODEL', 'deepseek-r1:latest')})"
+            # Call Ollama without redacting output
+            ollama_host = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+            ollama_model = os.getenv("OLLAMA_MODEL", "deepseek-r1:latest")
+            client = ollama.Client(host=ollama_host)
+            response = client.generate(model=ollama_model, prompt=prompt,
+                                     options={"temperature": body.temperature, "num_predict": 1000})
+            answer = response.get('response', str(response))  # NO redaction!
+            model_used = f"Ollama ({ollama_model})"
         else:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Unsupported model: {body.model}"
             )
 
-        # Return only the answer text - no sources, no metadata, no model info
-        logger.info(f"Generated response using {model_used}")
+        # ⚠️ UNSAFE: Return raw answer - may contain passwords, SSN, API keys!
+        logger.warning(f"[UNSAFE DEMO] Generated UNREDACTED response using {model_used}")
         return SimpleChatResponse(
-            answer=answer
+            answer=answer  # NO redaction applied!
         )
 
     except HTTPException:
@@ -1793,4 +1747,96 @@ async def chat_with_documents(request: Request, body: ChatRequest):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"An unexpected error occurred: {str(e)}"
+        )
+
+
+# ----------------------- DEMO LEAK Endpoint (FOR DEMO ONLY!) -----------------------
+# ⚠️ WARNING: This endpoint INTENTIONALLY leaks raw data to demonstrate the need for guardrails!
+# This should NEVER be exposed in production - it's for demos and red team testing only!
+@router.post("/demo-leak", response_model=SimpleChatResponse)
+async def demo_leak_endpoint(request: Request, body: ChatRequest):
+    """
+    DEMO ONLY: Returns RAW document content without any LLM processing or redaction.
+
+    This endpoint demonstrates what happens when there are NO security controls:
+    - No guardrails
+    - No LLM filtering
+    - No redaction
+    - Just raw data retrieval
+
+    ⚠️ FOR DEMONSTRATION PURPOSES ONLY!
+    """
+
+    try:
+        file_id = body.file_id
+        query = body.query
+        k = body.k or 4
+
+        # Get pgvector service
+        pgv_service = request.app.state.services.get("pgvector")
+        if not pgv_service:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="PGVector service not available"
+            )
+
+        # Retrieve documents - NO guardrails, NO filtering!
+        documents = await pgv_service.search_similar_chunks(
+            file_id=file_id,
+            query_text=query,
+            top_k=k
+        )
+
+        if not documents:
+            return SimpleChatResponse(
+                answer="No documents found for this file_id.",
+                sources=[],
+                model_used="DEMO-RAW-RETRIEVAL"
+            )
+
+        # Build response with RAW document content - NO LLM, NO REDACTION!
+        leaked_content_parts = []
+        leaked_content_parts.append("⚠️ DEMO MODE: RAW DOCUMENT CONTENT (NO SECURITY!) ⚠️\n")
+        leaked_content_parts.append(f"Query: {query}\n")
+        leaked_content_parts.append("=" * 80)
+        leaked_content_parts.append("\n\nRETRIEVED DOCUMENTS (UNFILTERED):\n")
+
+        sources = []
+        for idx, (doc, score) in enumerate(documents, 1):
+            # Show EVERYTHING - including passwords, SSNs, API keys, etc.
+            leaked_content_parts.append(f"\n[Document {idx}] (Relevance: {score:.3f})")
+            leaked_content_parts.append("-" * 80)
+            leaked_content_parts.append(f"{doc.page_content}")
+            leaked_content_parts.append("-" * 80)
+
+            # Add to sources
+            metadata = doc.metadata or {}
+            sources.append(
+                ChatSource(
+                    chunk_id=metadata.get("chunk_id", idx),
+                    file_id=file_id,
+                    content=doc.page_content,  # RAW content, no hiding!
+                    page_number=metadata.get("page", 1),
+                    relevance_score=float(score)
+                )
+            )
+
+        leaked_content_parts.append("\n" + "=" * 80)
+        leaked_content_parts.append("\n⚠️ THIS IS WHAT LEAKS WITHOUT GUARDRAILS! ⚠️")
+
+        raw_answer = "\n".join(leaked_content_parts)
+
+        return SimpleChatResponse(
+            answer=raw_answer,
+            sources=sources,
+            model_used="DEMO-RAW-RETRIEVAL-NO-SECURITY"
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Error in demo leak endpoint")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Demo endpoint error: {str(e)}"
         )
